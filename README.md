@@ -4,14 +4,21 @@ Low-latency live voice changer prototype with:
 
 - Python backend audio pipeline and inference abstraction
 - FastAPI WebSocket endpoint for browser audio streaming
-- React control panel component for Start/Stop and Voice Profile control
+- React + Vite frontend with Start/Stop and Voice Profile control
+- AudioWorklet capture, jitter buffering, and overlap-add backend smoothing
 
 ## Current Project Structure
 
 ```text
 voice-changer-app/
+  .github/workflows/ci.yml
   frontend/
-    src/components/VoiceChangerControlPanel.tsx
+    src/
+      App.tsx
+      components/VoiceChangerControlPanel.tsx
+      hooks/useVoiceStream.ts
+    public/worklets/pcm-capture-worklet.js
+    package.json
   src/app/
     api/server.py
     audio/io.py
@@ -29,6 +36,8 @@ voice-changer-app/
 - NumPy-based low-latency pitch shifting (pitched-down playback path)
 - WebSocket audio streaming endpoint (`/ws/audio`) for browser-to-backend live audio
 - Voice profile switching over WebSocket control messages
+- Profile-aware AI inference routing with optional profile-specific model paths
+- Dockerized backend runtime (`Dockerfile`, `docker-compose.yml`)
 
 ## Prerequisites
 
@@ -44,11 +53,17 @@ sudo apt-get update
 sudo apt-get install -y libportaudio2 libasound2-dev
 ```
 
-## Setup
+## Setup (Recommended via pyproject)
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
+pip install -e .[dev]
+```
+
+Alternative:
+
+```bash
 pip install -r requirements.txt
 ```
 
@@ -63,6 +78,22 @@ Health check:
 ```bash
 curl http://127.0.0.1:8000/health
 ```
+
+Inference status:
+
+```bash
+curl http://127.0.0.1:8000/health/inference
+```
+
+## Run Frontend
+
+```bash
+cd frontend
+npm ci
+npm run dev
+```
+
+Then open the local Vite URL (typically `http://127.0.0.1:5173`).
 
 ## Run Local Audio Loopback Demo
 
@@ -99,19 +130,32 @@ Server to client:
 
 ## Frontend Component
 
-File: `frontend/src/components/VoiceChangerControlPanel.tsx`
+Frontend is a complete minimal React app scaffolded with Vite:
 
-Provided UI controls:
-
-- Start/Stop button
-- Voice Profiles dropdown
-
-This repository currently includes the component file, not a full frontend app scaffold.
-Integrate it into your React app and point `wsUrl` to your backend server.
+- `frontend/src/components/VoiceChangerControlPanel.tsx`
+- `frontend/src/hooks/useVoiceStream.ts`
+- `frontend/public/worklets/pcm-capture-worklet.js`
 
 ## Environment Variables
 
 Copy `.env.example` to `.env` and customize as needed.
+
+Profile-specific model overrides are supported:
+
+- `VOICE_TORCH_MODEL_PATH_ROBOT`
+- `VOICE_TORCH_MODEL_PATH_DEEP`
+- `VOICE_TORCH_MODEL_PATH_CHIPMUNK`
+- `VOICE_ONNX_MODEL_PATH_ROBOT`
+- `VOICE_ONNX_MODEL_PATH_DEEP`
+- `VOICE_ONNX_MODEL_PATH_CHIPMUNK`
+
+## Docker
+
+```bash
+docker compose up --build
+```
+
+Backend will be available on `http://127.0.0.1:8000`.
 
 ## Testing
 
@@ -119,6 +163,25 @@ Copy `.env.example` to `.env` and customize as needed.
 PYTHONPATH=src .venv/bin/pytest -q
 ```
 
+Lint and formatting checks:
+
+```bash
+ruff check .
+black --check .
+```
+
+Frontend checks:
+
+```bash
+cd frontend
+npm run typecheck
+npm run build
+```
+
+## CI
+
+GitHub Actions workflow in `.github/workflows/ci.yml` runs backend lint/test and frontend typecheck/build on push and pull request.
+
 ## License
 
-No license file has been added yet. Add one if you plan to make this repository public.
+MIT. See `LICENSE`.

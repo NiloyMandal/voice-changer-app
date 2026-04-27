@@ -54,13 +54,26 @@ class InferenceEngine:
 
         self._torch_model: Any = None
         self._onnx_session: Any = None
+        self._torch_models: dict[str, Any] = {}
+        self._onnx_sessions: dict[str, Any] = {}
+
+        self._profiles = ("robot", "deep", "chipmunk")
 
         if self.backend == "torch" and self.torch_model_path:
             self._load_torch_model(self.torch_model_path)
         elif self.backend == "onnx" and self.onnx_model_path:
             self._load_onnx_model(self.onnx_model_path)
 
-    def _load_torch_model(self, model_path: str) -> None:
+        for profile in self._profiles:
+            profile_torch_path = os.getenv(f"VOICE_TORCH_MODEL_PATH_{profile.upper()}")
+            if self.backend == "torch" and profile_torch_path:
+                self._load_torch_model(profile_torch_path, profile=profile)
+
+            profile_onnx_path = os.getenv(f"VOICE_ONNX_MODEL_PATH_{profile.upper()}")
+            if self.backend == "onnx" and profile_onnx_path:
+                self._load_onnx_model(profile_onnx_path, profile=profile)
+
+    def _load_torch_model(self, model_path: str, profile: str | None = None) -> None:
         if torch is None:
             raise RuntimeError("PyTorch is not available but torch backend was requested")
 
@@ -77,7 +90,10 @@ class InferenceEngine:
         if hasattr(self._torch_model, "eval"):
             self._torch_model.eval()
 
-    def _load_onnx_model(self, model_path: str) -> None:
+        key = profile or "default"
+        self._torch_models[key] = self._torch_model
+
+    def _load_onnx_model(self, model_path: str, profile: str | None = None) -> None:
         if ort is None:
             raise RuntimeError("onnxruntime is not available but onnx backend was requested")
 
@@ -89,6 +105,27 @@ class InferenceEngine:
         if self.device == "cuda":
             providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
         self._onnx_session = ort.InferenceSession(str(model_file), providers=providers)
+
+        key = profile or "default"
+        self._onnx_sessions[key] = self._onnx_session
+
+    @staticmethod
+    def _profile_key(profile: str | None) -> str:
+        if profile is None:
+            return "default"
+        return profile.lower()
+
+    def _get_torch_model(self, profile: str | None) -> Any:
+        key = self._profile_key(profile)
+        if key in self._torch_models:
+            return self._torch_models[key]
+        return self._torch_models.get("default")
+
+    def _get_onnx_session(self, profile: str | None) -> Any:
+        key = self._profile_key(profile)
+        if key in self._onnx_sessions:
+            return self._onnx_sessions[key]
+        return self._onnx_sessions.get("default")
 
     @staticmethod
     def _ensure_float32_frame(frame: np.ndarray) -> np.ndarray:
@@ -196,8 +233,9 @@ class InferenceEngine:
 
         return restored.astype(np.float32, copy=False)
 
-    def _infer_torch(self, frame: np.ndarray) -> np.ndarray:
-        if torch is None or self._torch_model is None:
+    def _infer_torch(self, frame: np.ndarray, profile: str | None = None) -> np.ndarray:
+        model = self._get_torch_model(profile)
+        if torch is None or model is None:
             return frame
 
         model_input, original_shape = self._reshape_for_model(frame)
@@ -205,44 +243,46 @@ class InferenceEngine:
         with torch.inference_mode():
             tensor = torch.from_numpy(model_input)
             tensor = tensor.to(self.device)
-            output = self._torch_model(tensor)
+            output = model(tensor)
             if isinstance(output, (tuple, list)):
                 output = output[0]
             output_np = output.detach().to("cpu").float().numpy()
 
         return self._restore_frame_shape(output_np, original_shape)
 
-    def _infer_onnx(self, frame: np.ndarray) -> np.ndarray:
-        if ort is None or self._onnx_session is None:
+    def _infer_onnx(self, frame: np.ndarray, profile: str | None = None) -> np.ndarray:
+        session = self._get_onnx_session(profile)
+        if ort is None or session is None:
             return frame
 
         model_input, original_shape = self._reshape_for_model(frame)
 
-        input_name = self._onnx_session.get_inputs()[0].name
-        outputs = self._onnx_session.run(None, {input_name: model_input})
+        input_name = session.get_inputs()[0].name
+        outputs = session.run(None, {input_name: model_input})
         output_np = outputs[0]
         return self._restore_frame_shape(output_np, original_shape)
 
-    def infer(self, frame: np.ndarray) -> np.ndarray:
+    def infer(self, frame: np.ndarray, profile: str | None = None) -> np.ndarray:
         frame_f32 = self._ensure_float32_frame(frame)
         frame_norm, gain = self._normalize_frame(frame_f32)
 
         if self.backend == "torch":
-            out = self._infer_torch(frame_norm)
+            out = self._infer_torch(frame_norm, profile=profile)
             return self._denormalize_frame(out, gain)
 
-        out = self._infer_onnx(frame_norm)
+        out = self._infer_onnx(frame_norm, profile=profile)
         return self._denormalize_frame(out, gain)
 
-    def is_ready(self) -> bool:
+    def is_ready(self, profile: str | None = None) -> bool:
         if self.backend == "torch":
-            return self._torch_model is not None
-        return self._onnx_session is not None
+            return self._get_torch_model(profile) is not None
+        return self._get_onnx_session(profile) is not None
 
     def status(self) -> dict[str, Any]:
         providers: list[str] = []
-        if self._onnx_session is not None:
-            providers = list(self._onnx_session.get_providers())
+        default_session = self._onnx_sessions.get("default")
+        if default_session is not None:
+            providers = list(default_session.get_providers())
 
         return {
             "backend": self.backend,
@@ -253,4 +293,6 @@ class InferenceEngine:
             "model_input_layout": self.model_input_layout,
             "normalize_mode": self.normalize_mode,
             "onnx_providers": providers,
+            "loaded_torch_profiles": sorted(self._torch_models.keys()),
+            "loaded_onnx_profiles": sorted(self._onnx_sessions.keys()),
         }

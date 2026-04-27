@@ -62,9 +62,9 @@ def _apply_profile(audio: np.ndarray, profile: ProfileName) -> np.ndarray:
     if profile == "natural":
         return audio
 
-    # Route all transformed profiles through model inference when available.
-    if inference_engine is not None and inference_engine.is_ready():
-        inferred = inference_engine.infer(audio)
+    # Route transformed profiles through profile-specific inference when available.
+    if inference_engine is not None and inference_engine.is_ready(profile):
+        inferred = inference_engine.infer(audio, profile=profile)
         return np.clip(inferred.astype(np.float32, copy=False), -1.0, 1.0)
 
     # Fallback DSP path if model is unavailable or failed to initialize.

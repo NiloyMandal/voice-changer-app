@@ -1,0 +1,25 @@
+version: "3.9"
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: voice-changer-backend
+    environment:
+      VOICE_INFERENCE_BACKEND: ${VOICE_INFERENCE_BACKEND:-torch}
+      VOICE_INFERENCE_DEVICE: ${VOICE_INFERENCE_DEVICE:-cpu}
+      VOICE_TORCH_MODEL_PATH: ${VOICE_TORCH_MODEL_PATH:-}
+      VOICE_ONNX_MODEL_PATH: ${VOICE_ONNX_MODEL_PATH:-}
+      VOICE_TORCH_MODEL_PATH_ROBOT: ${VOICE_TORCH_MODEL_PATH_ROBOT:-}
+      VOICE_TORCH_MODEL_PATH_DEEP: ${VOICE_TORCH_MODEL_PATH_DEEP:-}
+      VOICE_TORCH_MODEL_PATH_CHIPMUNK: ${VOICE_TORCH_MODEL_PATH_CHIPMUNK:-}
+      VOICE_ONNX_MODEL_PATH_ROBOT: ${VOICE_ONNX_MODEL_PATH_ROBOT:-}
+      VOICE_ONNX_MODEL_PATH_DEEP: ${VOICE_ONNX_MODEL_PATH_DEEP:-}
+      VOICE_ONNX_MODEL_PATH_CHIPMUNK: ${VOICE_ONNX_MODEL_PATH_CHIPMUNK:-}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./src:/app/src:ro
+      - ./models:/app/models:ro
+    restart: unless-stopped

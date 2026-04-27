@@ -23,6 +23,9 @@ export function useVoiceStream({
   const JITTER_LOOKAHEAD_SECONDS = 0.03;
   const JITTER_PRIME_SECONDS = 0.09;
 
+  const WS_RECONNECT_MAX_ATTEMPTS = 6;
+  const WS_RECONNECT_BASE_DELAY_MS = 1000;
+
   const [isRunning, setIsRunning] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [profile, setProfileState] = useState(initialProfile);
@@ -45,6 +48,16 @@ export function useVoiceStream({
   const playbackCursorRef = useRef(0);
   const jitterQueueRef = useRef<ArrayBuffer[]>([]);
   const isPlaybackPrimedRef = useRef(false);
+  const reconnectAttemptsRef = useRef(0);
+  const reconnectTimerRef = useRef<number | null>(null);
+  const shouldReconnectRef = useRef(false);
+
+  const clearReconnectTimer = useCallback((): void => {
+    if (reconnectTimerRef.current !== null) {
+      window.clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+  }, []);
 
   const sendProfileMessage = useCallback((profileId: string): void => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
@@ -60,6 +73,10 @@ export function useVoiceStream({
   }, []);
 
   const cleanup = useCallback(async (): Promise<void> => {
+    shouldReconnectRef.current = false;
+    reconnectAttemptsRef.current = 0;
+    clearReconnectTimer();
+
     if (workletNodeRef.current) {
       workletNodeRef.current.port.onmessage = null;
       workletNodeRef.current.disconnect();
@@ -142,7 +159,7 @@ export function useVoiceStream({
 
     setIsRunning(false);
     setIsConnecting(false);
-  }, []);
+  }, [clearReconnectTimer]);
 
   const scheduleChunkPlayback = useCallback((pcmBytes: ArrayBuffer): void => {
     const audioContext = audioContextRef.current;
@@ -216,6 +233,104 @@ export function useVoiceStream({
     [drainJitterBuffer],
   );
 
+  const openWebSocket = useCallback(async (): Promise<WebSocket> => {
+    const ws = new WebSocket(wsUrl);
+    ws.binaryType = "arraybuffer";
+
+    ws.onmessage = (event: MessageEvent<ArrayBuffer | Blob | string>) => {
+      if (typeof event.data === "string") {
+        return;
+      }
+
+      if (event.data instanceof ArrayBuffer) {
+        enqueuePlaybackChunk(event.data);
+        return;
+      }
+
+      void event.data.arrayBuffer().then((buffer) => {
+        enqueuePlaybackChunk(buffer);
+      });
+    };
+
+    await new Promise<void>((resolve, reject) => {
+      const timeout = window.setTimeout(() => {
+        ws.onopen = null;
+        ws.onerror = null;
+        reject(new Error("WebSocket connection timed out"));
+      }, 5000);
+
+      ws.onopen = () => {
+        window.clearTimeout(timeout);
+        ws.onopen = null;
+        ws.onerror = null;
+        reconnectAttemptsRef.current = 0;
+        setIsConnecting(false);
+        setIsRunning(true);
+        resolve();
+      };
+
+      ws.onerror = () => {
+        window.clearTimeout(timeout);
+        ws.onopen = null;
+        ws.onerror = null;
+        reject(new Error("Failed to open WebSocket"));
+      };
+    });
+
+    ws.onerror = () => {
+      setError("WebSocket connection error.");
+    };
+
+    ws.onclose = () => {
+      wsRef.current = null;
+      if (!shouldReconnectRef.current) {
+        setIsRunning(false);
+        setIsConnecting(false);
+        return;
+      }
+
+      if (reconnectAttemptsRef.current >= WS_RECONNECT_MAX_ATTEMPTS) {
+        setError("WebSocket disconnected. Reconnect attempts exhausted.");
+        setIsRunning(false);
+        setIsConnecting(false);
+        return;
+      }
+
+      const delay = Math.min(
+        WS_RECONNECT_BASE_DELAY_MS * (2 ** reconnectAttemptsRef.current),
+        8000,
+      );
+      reconnectAttemptsRef.current += 1;
+      setIsConnecting(true);
+      setError(`WebSocket disconnected. Reconnecting in ${Math.round(delay / 1000)}s...`);
+      clearReconnectTimer();
+      reconnectTimerRef.current = window.setTimeout(() => {
+        if (!shouldReconnectRef.current) {
+          return;
+        }
+
+        void openWebSocket()
+          .then((nextWs) => {
+            wsRef.current = nextWs;
+            sendProfileMessage(profile);
+          })
+          .catch(() => {
+            // Retry loop continues from onclose of failed socket.
+          });
+      }, delay);
+    };
+
+    return ws;
+  }, [
+    WS_RECONNECT_BASE_DELAY_MS,
+    WS_RECONNECT_MAX_ATTEMPTS,
+    clearReconnectTimer,
+    enqueuePlaybackChunk,
+    profile,
+    sendProfileMessage,
+    wsUrl,
+  ]);
+
   const start = useCallback(async (): Promise<void> => {
     if (isRunning || isConnecting) {
       return;
@@ -223,51 +338,12 @@ export function useVoiceStream({
 
     setError(null);
     setIsConnecting(true);
+    shouldReconnectRef.current = true;
+    reconnectAttemptsRef.current = 0;
+    clearReconnectTimer();
 
     try {
-      const ws = new WebSocket(wsUrl);
-      ws.binaryType = "arraybuffer";
-
-      ws.onclose = () => {
-        setIsRunning(false);
-        setIsConnecting(false);
-      };
-
-      ws.onerror = () => {
-        setError("WebSocket connection error.");
-      };
-
-      ws.onmessage = (event: MessageEvent<ArrayBuffer | Blob | string>) => {
-        if (typeof event.data === "string") {
-          return;
-        }
-
-        if (event.data instanceof ArrayBuffer) {
-          enqueuePlaybackChunk(event.data);
-          return;
-        }
-
-        void event.data.arrayBuffer().then((buffer) => {
-          enqueuePlaybackChunk(buffer);
-        });
-      };
-
-      await new Promise<void>((resolve, reject) => {
-        const timeout = window.setTimeout(() => {
-          reject(new Error("WebSocket connection timed out"));
-        }, 5000);
-
-        ws.onopen = () => {
-          window.clearTimeout(timeout);
-          resolve();
-        };
-
-        ws.onerror = () => {
-          window.clearTimeout(timeout);
-          reject(new Error("Failed to open WebSocket"));
-        };
-      });
-
+      const ws = await openWebSocket();
       wsRef.current = ws;
       sendProfileMessage(profile);
 
@@ -335,12 +411,18 @@ export function useVoiceStream({
       });
       workletNodeRef.current = workletNode;
 
-      workletNode.port.onmessage = (event: MessageEvent<ArrayBuffer>) => {
+      workletNode.port.onmessage = (event: MessageEvent<{ type?: string; buffer?: ArrayBuffer }>) => {
+        const payload = event.data;
+        if (!payload || payload.type !== "pcm16" || !(payload.buffer instanceof ArrayBuffer)) {
+          return;
+        }
+
         if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
           return;
         }
 
-        wsRef.current.send(event.data);
+        wsRef.current.send(payload.buffer);
+        workletNode.port.postMessage({ type: "recycle", buffer: payload.buffer }, [payload.buffer]);
       };
 
       const sinkNode = audioContext.createGain();
@@ -387,7 +469,15 @@ export function useVoiceStream({
     } finally {
       setIsConnecting(false);
     }
-  }, [cleanup, enqueuePlaybackChunk, isConnecting, isRunning, profile, sendProfileMessage, wsUrl]);
+  }, [
+    cleanup,
+    clearReconnectTimer,
+    isConnecting,
+    isRunning,
+    openWebSocket,
+    profile,
+    sendProfileMessage,
+  ]);
 
   const stop = useCallback(async (): Promise<void> => {
     await cleanup();
