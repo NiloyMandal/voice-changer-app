@@ -233,3 +233,24 @@ class InferenceEngine:
 
         out = self._infer_onnx(frame_norm)
         return self._denormalize_frame(out, gain)
+
+    def is_ready(self) -> bool:
+        if self.backend == "torch":
+            return self._torch_model is not None
+        return self._onnx_session is not None
+
+    def status(self) -> dict[str, Any]:
+        providers: list[str] = []
+        if self._onnx_session is not None:
+            providers = list(self._onnx_session.get_providers())
+
+        return {
+            "backend": self.backend,
+            "device": self.device,
+            "ready": self.is_ready(),
+            "torch_model_path": self.torch_model_path,
+            "onnx_model_path": self.onnx_model_path,
+            "model_input_layout": self.model_input_layout,
+            "normalize_mode": self.normalize_mode,
+            "onnx_providers": providers,
+        }
