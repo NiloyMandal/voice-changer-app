@@ -8,18 +8,12 @@ import sounddevice as sd
 from app.audio.buffer import FrameBuffer
 
 
-def pitch_shift_numpy(
+def _pitch_shift_linear(
     audio: np.ndarray,
     semitones: float,
     source_positions: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Apply a lightweight pitch shift using linear interpolation.
-
-    The function preserves frame length to keep callback timing stable.
-    """
-    if audio.ndim not in (1, 2):
-        raise ValueError("audio must be 1D or 2D (frames[, channels])")
-
+    """Legacy linear pitch shift fallback for environments without librosa."""
     frames = int(audio.shape[0])
     if frames < 2:
         return audio.copy()
@@ -43,6 +37,58 @@ def pitch_shift_numpy(
             copy=False,
         )
     return out
+
+
+def pitch_shift_numpy(
+    audio: np.ndarray,
+    semitones: float,
+    source_positions: np.ndarray | None = None,
+) -> np.ndarray:
+    """Apply pitch shift while preserving frame duration.
+
+    Prefers librosa's STFT/phase-vocoder path. Falls back to legacy linear mode
+    when librosa is unavailable or chunk is too small for stable FFT processing.
+    """
+    if audio.ndim not in (1, 2):
+        raise ValueError("audio must be 1D or 2D (frames[, channels])")
+
+    # Very short chunks can produce unstable FFT behavior; keep deterministic fallback.
+    frames = int(audio.shape[0])
+    if frames < 64:
+        return _pitch_shift_linear(audio, semitones, source_positions)
+
+    try:
+        import librosa
+    except Exception:
+        return _pitch_shift_linear(audio, semitones, source_positions)
+
+    n_fft = min(1024, frames)
+    if n_fft % 2 != 0:
+        n_fft -= 1
+    if n_fft < 64:
+        return _pitch_shift_linear(audio, semitones, source_positions)
+    hop_length = max(16, n_fft // 4)
+
+    def _shift_channel(channel: np.ndarray) -> np.ndarray:
+        shifted = librosa.effects.pitch_shift(
+            channel.astype(np.float32, copy=False),
+            sr=16000,
+            n_steps=semitones,
+            bins_per_octave=12,
+            n_fft=n_fft,
+            hop_length=hop_length,
+        )
+        if shifted.shape[0] != frames:
+            shifted = librosa.util.fix_length(shifted, size=frames)
+        return shifted.astype(np.float32, copy=False)
+
+    if audio.ndim == 1:
+        return _shift_channel(audio).astype(audio.dtype, copy=False)
+
+    out = np.empty_like(audio, dtype=np.float32)
+    for ch in range(audio.shape[1]):
+        out[:, ch] = _shift_channel(audio[:, ch])
+    return out.astype(audio.dtype, copy=False)
 
 
 class RealTimeAudioIO:

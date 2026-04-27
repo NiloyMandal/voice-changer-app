@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -8,11 +10,34 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.audio.io import pitch_shift_numpy
+from app.config.settings import settings
+from app.inference.engine import InferenceEngine
 
 
 ProfileName = Literal["natural", "robot", "deep", "chipmunk"]
 
-app = FastAPI(title="Voice Changer Backend")
+
+inference_engine: InferenceEngine | None = None
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    global inference_engine
+    inference_engine = InferenceEngine(
+        backend=settings.inference_backend,
+        torch_model_path=settings.torch_model_path,
+        onnx_model_path=settings.onnx_model_path,
+        device=settings.inference_device,
+        model_input_layout=settings.model_input_layout,
+        normalize_mode=settings.inference_normalize,
+        target_dbfs=settings.target_dbfs,
+        restore_level=settings.restore_level,
+    )
+    yield
+    inference_engine = None
+
+
+app = FastAPI(title="Voice Changer Backend", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -39,7 +64,12 @@ def _apply_profile(audio: np.ndarray, profile: ProfileName) -> np.ndarray:
         shifted = pitch_shift_numpy(audio, semitones=4.0)
         return np.clip(shifted, -1.0, 1.0)
 
-    # robot: simple hard clipping distortion effect.
+    # robot: route through AI inference engine for browser-based model testing.
+    if inference_engine is not None:
+        inferred = inference_engine.infer(audio)
+        return np.clip(inferred.astype(np.float32, copy=False), -1.0, 1.0)
+
+    # Fallback if startup initialization was skipped.
     return np.clip(np.round(audio * 8.0) / 8.0, -1.0, 1.0)
 
 
@@ -131,7 +161,12 @@ async def stream_audio(websocket: WebSocket) -> None:
                 continue
 
             if data is not None:
-                processed = _process_pcm16_chunk(data, current_profile, stream_state)
+                processed = await asyncio.to_thread(
+                    _process_pcm16_chunk,
+                    data,
+                    current_profile,
+                    stream_state,
+                )
                 if processed:
                     await websocket.send_bytes(processed)
                 continue

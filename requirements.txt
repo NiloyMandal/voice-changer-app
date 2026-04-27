@@ -1,6 +1,7 @@
 # Core numeric + DSP
 numpy>=1.26
 scipy>=1.13
+librosa>=0.10.2
 
 # Real-time audio I/O (PortAudio backend)
 sounddevice>=0.4.7
