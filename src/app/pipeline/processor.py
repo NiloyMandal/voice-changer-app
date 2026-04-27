@@ -4,8 +4,7 @@ import numpy as np
 
 
 class FrameProcessor(Protocol):
-    def process(self, frame: np.ndarray) -> np.ndarray:
-        ...
+    def process(self, frame: np.ndarray) -> np.ndarray: ...
 
 
 class PassthroughProcessor:

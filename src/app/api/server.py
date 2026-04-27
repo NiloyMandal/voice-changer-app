@@ -13,7 +13,6 @@ from app.audio.io import pitch_shift_numpy
 from app.config.settings import settings
 from app.inference.engine import InferenceEngine
 
-
 ProfileName = Literal["natural", "robot", "deep", "chipmunk"]
 
 

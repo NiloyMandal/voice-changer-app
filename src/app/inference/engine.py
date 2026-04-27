@@ -40,10 +40,18 @@ class InferenceEngine:
         self.backend = backend
         self.torch_model_path = torch_model_path or os.getenv("VOICE_TORCH_MODEL_PATH")
         self.onnx_model_path = onnx_model_path or os.getenv("VOICE_ONNX_MODEL_PATH")
-        self.model_input_layout = (model_input_layout or os.getenv("VOICE_MODEL_INPUT_LAYOUT", "bct")).lower()
-        self.normalize_mode = (normalize_mode or os.getenv("VOICE_INFERENCE_NORMALIZE", "unit")).lower()
-        self.target_dbfs = float(target_dbfs if target_dbfs is not None else os.getenv("VOICE_TARGET_DBFS", "-20.0"))
-        restore = restore_level if restore_level is not None else os.getenv("VOICE_RESTORE_LEVEL", "true")
+        self.model_input_layout = (
+            model_input_layout or os.getenv("VOICE_MODEL_INPUT_LAYOUT", "bct")
+        ).lower()
+        self.normalize_mode = (
+            normalize_mode or os.getenv("VOICE_INFERENCE_NORMALIZE", "unit")
+        ).lower()
+        self.target_dbfs = float(
+            target_dbfs if target_dbfs is not None else os.getenv("VOICE_TARGET_DBFS", "-20.0")
+        )
+        restore = (
+            restore_level if restore_level is not None else os.getenv("VOICE_RESTORE_LEVEL", "true")
+        )
         self.restore_level = str(restore).lower() in {"1", "true", "yes", "on"}
 
         requested_device = device or os.getenv("VOICE_INFERENCE_DEVICE", "cuda")
@@ -154,9 +162,7 @@ class InferenceEngine:
             gain = target_amp / rms
             return np.clip(frame * gain, -1.0, 1.0), gain
 
-        raise ValueError(
-            "normalize_mode must be one of: 'none', 'unit', 'dbfs'"
-        )
+        raise ValueError("normalize_mode must be one of: 'none', 'unit', 'dbfs'")
 
     def _denormalize_frame(self, frame: np.ndarray, gain: float) -> np.ndarray:
         if not self.restore_level:
@@ -184,13 +190,13 @@ class InferenceEngine:
             # [T, C] -> [1, T] (first channel only)
             model_input = time_major[:, 0][None, :]
         else:
-            raise ValueError(
-                "model_input_layout must be one of: 'bct', 'btc', 'bt'"
-            )
+            raise ValueError("model_input_layout must be one of: 'bct', 'btc', 'bt'")
 
         return model_input.astype(np.float32, copy=False), original_shape
 
-    def _restore_frame_shape(self, model_output: np.ndarray, original_shape: tuple[int, ...]) -> np.ndarray:
+    def _restore_frame_shape(
+        self, model_output: np.ndarray, original_shape: tuple[int, ...]
+    ) -> np.ndarray:
         """Map model output from configured layout back to original frame shape."""
         out = np.asarray(model_output)
 
