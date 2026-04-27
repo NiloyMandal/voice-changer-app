@@ -1,0 +1,10 @@
+[project]
+name = "voice-changer-app"
+version = "0.1.0"
+description = "Low-latency live voice changer prototype with FastAPI WebSocket streaming"
+readme = "README.md"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

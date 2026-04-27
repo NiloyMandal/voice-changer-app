@@ -1,0 +1,25 @@
+# Core numeric + DSP
+numpy>=1.26
+scipy>=1.13
+
+# Real-time audio I/O (PortAudio backend)
+sounddevice>=0.4.7
+
+# Config + logging
+pydantic>=2.7
+pydantic-settings>=2.2
+loguru>=0.7
+
+# Inference backends
+torch>=2.3
+onnxruntime>=1.18
+
+# Testing
+pytest>=8.2
+
+# API server
+fastapi>=0.112
+uvicorn>=0.30
+
+# Optional fallback audio backend (install only if needed)
+# pyaudio>=0.2.14
