@@ -1,6 +1,7 @@
 # Voice Changer App
 
 Low-latency live voice changer prototype with:
+
 - Python backend audio pipeline and inference abstraction
 - FastAPI WebSocket endpoint for browser audio streaming
 - React control panel component for Start/Stop and Voice Profile control
@@ -76,20 +77,23 @@ Note: The host machine must have available input/output audio devices.
 Endpoint: `ws://localhost:8000/ws/audio`
 
 Client to server:
+
 - Binary: PCM16 mono chunks (`Int16Array` bytes)
 - Text JSON control:
 
 ```json
-{"type":"set_profile","profile":"deep"}
+{ "type": "set_profile", "profile": "deep" }
 ```
 
 Supported profiles:
+
 - `natural`
 - `robot`
 - `deep`
 - `chipmunk`
 
 Server to client:
+
 - Binary processed PCM16 chunks
 - JSON error messages for invalid control payloads
 
@@ -98,6 +102,7 @@ Server to client:
 File: `frontend/src/components/VoiceChangerControlPanel.tsx`
 
 Provided UI controls:
+
 - Start/Stop button
 - Voice Profiles dropdown
 

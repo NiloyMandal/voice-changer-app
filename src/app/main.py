@@ -10,7 +10,16 @@ from app.pipeline.processor import PassthroughProcessor
 
 def run() -> None:
     processor = PassthroughProcessor()
-    engine = InferenceEngine(settings.inference_backend)
+    engine = InferenceEngine(
+        backend=settings.inference_backend,
+        torch_model_path=settings.torch_model_path,
+        onnx_model_path=settings.onnx_model_path,
+        device=settings.inference_device,
+        model_input_layout=settings.model_input_layout,
+        normalize_mode=settings.inference_normalize,
+        target_dbfs=settings.target_dbfs,
+        restore_level=settings.restore_level,
+    )
     semitones_down = -4.0
 
     pitch_ratio = 2.0 ** (semitones_down / 12.0)
